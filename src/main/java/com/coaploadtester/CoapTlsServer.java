@@ -1,4 +1,4 @@
-package com.coaplearn.tls;
+package com.coaploadtester;
 
 import org.eclipse.californium.core.CoapResource;
 import org.eclipse.californium.core.CoapServer;

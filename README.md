@@ -1,6 +1,6 @@
-# CoAP over TLS/TCP Demo
+# CoAP Load Tester
 
-基于 **Eclipse Californium 3.1.0** + **JDK 21** 的 CoAP over TLS/TCP 示例工程，演示如何用**同一份 JKS 证书 + 密码**实现服务端与客户端的双向 TLS 通信，并提供图形化压测工具。
+基于 **Eclipse Californium 3.1.0** + **JDK 21** 的 CoAP over TLS/TCP 压测工具，提供 JMeter 风格图形界面与命令行两种压测方式，并附演示用服务端/客户端，演示如何用**同一份 JKS 证书 + 密码**实现双向 TLS 通信。
 
 ## 技术栈
 
@@ -25,7 +25,7 @@ URI Scheme：`coaps+tcp://host:port/path`
 ## 项目结构
 
 ```
-coaplearn/
+coap-load-tester/
 ├── pom.xml                                    # Maven 配置
 ├── server.jks                                 # 自签名 CA 证书（服务端+客户端共用）
 ├── gen-cert.ps1                               # 证书生成脚本
@@ -35,12 +35,12 @@ coaplearn/
 ├── run-loadtest-gui.bat                       # 图形化压测工具
 ├── Californium3.properties                    # Californium 运行时配置（自动生成）
 └── src/main/
-    ├── java/com/coaplearn/tls/
+    ├── java/com/github/wuzhudexiaopacai/
     │   ├── SslContextFactory.java             # 从 JKS 构建 SSLContext（身份+信任锚）
     │   ├── CoapTlsServer.java                 # CoAP over TLS/TCP 服务端
     │   ├── CoapTlsClient.java                 # CoAP over TLS/TCP 客户端（单次请求示例）
     │   ├── CoapTlsLoadTest.java               # 命令行压测（多线程 + 延迟统计）
-    │   └── CoapTlsLoadTestGui.java            # 图形化压测工具（JMeter 风格）
+    │   └── CoapLoadTester.java                # 图形化压测工具（JMeter 风格）
     └── resources/
         └── simplelogger.properties            # 日志级别配置
 ```

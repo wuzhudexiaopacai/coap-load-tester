@@ -16,7 +16,7 @@ if not exist "%JAVA%" (
     exit /b 1
 )
 
-if not exist target\classes\com\coaplearn\tls\CoapTlsServer.class (
+if not exist target\classes\com\github\wuzhudexiaopacai\CoapTlsServer.class (
     echo [INFO] Compiling project ...
     call mvn -q compile
 )
@@ -30,6 +30,6 @@ for /f "usebackq delims=" %%i in ("cp.txt") do set "CP=%%i"
 set "FULL_CP=target\classes;%CP%"
 
 echo [INFO] Starting CoAP TLS server (coaps+tcp://localhost:5684) ...
-"%JAVA%" -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -cp "%FULL_CP%" com.coaplearn.tls.CoapTlsServer
+"%JAVA%" -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -cp "%FULL_CP%" com.github.wuzhudexiaopacai.CoapTlsServer
 
 endlocal

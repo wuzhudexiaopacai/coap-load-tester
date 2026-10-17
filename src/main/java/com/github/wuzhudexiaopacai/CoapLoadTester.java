@@ -1,4 +1,4 @@
-package com.coaplearn.tls;
+package com.github.wuzhudexiaopacai;
 
 import org.eclipse.californium.core.CoapClient;
 import org.eclipse.californium.core.CoapResponse;
@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.LongAdder;
  */
 
 /**
- * @author ndx
+ * @author wuzhudexiaopacai
  */
 public class CoapLoadTester extends JFrame {
 
