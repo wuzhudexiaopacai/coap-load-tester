@@ -24,7 +24,7 @@ if errorlevel 1 goto :error
 echo [2/4] Prepare target\dist ...
 if exist target\dist rmdir /s /q target\dist
 mkdir target\dist
-copy /y target\coap-tls-tcp-demo-1.0.0-obf.jar target\dist\ >nul
+copy /y target\coap-load-tester-1.0.0-obf.jar target\dist\ >nul
 call mvn -q dependency:copy-dependencies "-DoutputDirectory=target/dist" "-DincludeScope=runtime"
 if errorlevel 1 goto :error
 
@@ -33,11 +33,11 @@ if exist target\jpackage rmdir /s /q target\jpackage
 "%JPACKAGE%" --type app-image ^
   --name CoapLoadTester ^
   --input target\dist ^
-  --main-jar coap-tls-tcp-demo-1.0.0-obf.jar ^
-  --main-class com.coaplearn.tls.CoapLoadTester ^
+  --main-jar coap-load-tester-1.0.0-obf.jar ^
+  --main-class com.github.wuzhudexiaopacai.CoapLoadTester ^
   --dest target\jpackage ^
   --app-version 1.0.0 ^
-  --vendor CoapLearn
+  --vendor ndx
 if errorlevel 1 goto :error
 
 echo [4/4] Done.

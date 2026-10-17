@@ -4,13 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.coaplearn</groupId>
-    <artifactId>coap-tls-tcp-demo</artifactId>
+    <groupId>com.github.wuzhudexiaopacai</groupId>
+    <artifactId>coap-load-tester</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>coap-tls-tcp-demo</name>
-    <description>CoAP over TLS/TCP demo with a single shared JKS</description>
+    <name>coap-load-tester</name>
+    <description>CoAP load testing tool over TLS/TCP (GUI + CLI), with demo server/client sharing a single JKS</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -51,7 +51,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.coaplearn.tls.CoapLoadTester</mainClass>
+                            <mainClass>com.github.wuzhudexiaopacai.CoapLoadTester</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
@@ -81,7 +81,7 @@
                         <option>-dontnote</option>
                         <option>-ignorewarnings</option>
                         <!-- 保留 GUI 入口类名与 main 方法，供 exe 启动器调用 -->
-                        <option>-keep public class com.coaplearn.tls.CoapLoadTester { public static void main(java.lang.String[]); }</option>
+                        <option>-keep public class com.github.wuzhudexiaopacai.CoapLoadTester { public static void main(java.lang.String[]); }</option>
                         <option>-keepattributes Exceptions,Signature,Deprecated,*Annotation*,InnerClasses,EnclosingMethod,Record</option>
                         <option>-libraryjars ${java.home}/jmods/java.base.jmod</option>
                         <option>-libraryjars ${java.home}/jmods/java.desktop.jmod</option>

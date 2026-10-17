@@ -29,7 +29,7 @@ Write-Host "[1/3] Generate self-signed cert (alias=server)..."
     -storetype JKS `
     -storepass $pass `
     -keypass $pass `
-    -dname "CN=localhost, OU=CoAP, O=CoapLearn, L=Test, ST=Test, C=CN" `
+    -dname "CN=localhost, OU=CoAP, O=ndx, L=Test, ST=Test, C=CN" `
     -ext "SAN=dns:localhost,ip:127.0.0.1" `
     -ext "EKU=serverAuth,clientAuth" `
     -ext "bc:c"
