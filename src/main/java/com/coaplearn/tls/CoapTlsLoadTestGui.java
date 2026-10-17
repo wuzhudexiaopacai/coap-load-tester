@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * CoAP over TLS/TCP 图形化压测工具（增强版）。
+ * CoAP over TLS/TCP 图形化压测工具
  * <p>
  * 功能：
  * <ul>
@@ -675,9 +675,11 @@ public class CoapTlsLoadTestGui extends JFrame {
 
     private long percentile(double p) {
         if (latencySamples.isEmpty()) return 0;
-        long[] arr = new long[latencySamples.size()];
-        int i = 0;
-        for (Long v : latencySamples) arr[i++] = v;
+        // 快照：避免与 worker 线程并发修改导致数组越界
+        Long[] snapshot = latencySamples.toArray(new Long[0]);
+        if (snapshot.length == 0) return 0;
+        long[] arr = new long[snapshot.length];
+        for (int i = 0; i < snapshot.length; i++) arr[i] = snapshot[i];
         java.util.Arrays.sort(arr);
         int idx = (int) Math.ceil(p / 100.0 * arr.length) - 1;
         return arr[Math.max(0, Math.min(idx, arr.length - 1))];
