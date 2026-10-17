@@ -8,6 +8,7 @@ import org.eclipse.californium.core.coap.Option;
 import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.elements.config.Configuration;
+import org.eclipse.californium.elements.tcp.netty.TcpClientConnector;
 import org.eclipse.californium.elements.tcp.netty.TlsClientConnector;
 
 import javax.net.ssl.SSLContext;
@@ -45,6 +46,7 @@ import java.util.concurrent.atomic.LongAdder;
 public class CoapTlsLoadTestGui extends JFrame {
 
     // ---- 输入组件 ----
+    private final JCheckBox tlsCheck = new JCheckBox("启用 TLS 证书认证", true);
     private final JTextField jksField = new JTextField("server.jks", 20);
     private final JPasswordField pwdField = new JPasswordField("123456", 12);
     private final JTextField uriField = new JTextField("coaps+tcp://localhost:5684/hello", 30);
@@ -111,6 +113,7 @@ public class CoapTlsLoadTestGui extends JFrame {
         top.add(buildForm(), BorderLayout.NORTH);
         updateModeState();
         updateAuthState();
+        updateTlsState();
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
         stopBtn.setEnabled(false);
@@ -184,7 +187,12 @@ public class CoapTlsLoadTestGui extends JFrame {
         g.insets = new Insets(2, 4, 2, 4);
         g.anchor = GridBagConstraints.WEST;
 
-        g.gridx = 0; g.gridy = 0; p.add(new JLabel("JKS:"), g);
+        // TLS 开关
+        tlsCheck.addActionListener(e -> updateTlsState());
+        g.gridx = 0; g.gridy = 0; g.gridwidth = 4; p.add(tlsCheck, g);
+        g.gridwidth = 1;
+
+        g.gridx = 0; g.gridy = 1; p.add(new JLabel("JKS:"), g);
         g.gridx = 1; g.fill = GridBagConstraints.HORIZONTAL; g.weightx = 1; p.add(jksField, g);
         JButton browse = new JButton("浏览...");
         browse.addActionListener(e -> {
@@ -195,24 +203,24 @@ public class CoapTlsLoadTestGui extends JFrame {
         });
         g.gridx = 2; g.fill = GridBagConstraints.NONE; g.weightx = 0; p.add(browse, g);
 
-        g.gridx = 0; g.gridy = 1; p.add(new JLabel("密码:"), g);
+        g.gridx = 0; g.gridy = 2; p.add(new JLabel("密码:"), g);
         g.gridx = 1; g.fill = GridBagConstraints.HORIZONTAL; p.add(pwdField, g);
 
-        g.gridx = 0; g.gridy = 2; p.add(new JLabel("URI:"), g);
+        g.gridx = 0; g.gridy = 3; p.add(new JLabel("URI:"), g);
         g.gridx = 1; g.gridwidth = 2; g.fill = GridBagConstraints.HORIZONTAL; p.add(uriField, g);
         g.gridwidth = 1;
 
-        g.gridx = 0; g.gridy = 3; p.add(new JLabel("方法:"), g);
+        g.gridx = 0; g.gridy = 4; p.add(new JLabel("方法:"), g);
         g.gridx = 1; p.add(methodBox, g);
         g.gridx = 2; p.add(new JLabel("Content-Type:"), g);
         g.gridx = 3; p.add(contentTypeBox, g);
 
-        g.gridx = 0; g.gridy = 4; p.add(new JLabel("载荷(POST):"), g);
+        g.gridx = 0; g.gridy = 5; p.add(new JLabel("载荷(POST):"), g);
         g.gridx = 1; g.gridwidth = 2; g.fill = GridBagConstraints.BOTH; g.weighty = 1;
         p.add(new JScrollPane(payloadArea), g);
         g.weighty = 0; g.gridwidth = 1; g.fill = GridBagConstraints.HORIZONTAL;
 
-        g.gridx = 0; g.gridy = 5; p.add(new JLabel("并发:"), g);
+        g.gridx = 0; g.gridy = 6; p.add(new JLabel("并发:"), g);
         g.gridx = 1; p.add(threadsSpin, g);
 
         // 压测模式：按时长 / 按请求数
@@ -225,11 +233,11 @@ public class CoapTlsLoadTestGui extends JFrame {
         modePanel.add(totalReqSpin);
         modeDuration.addActionListener(e -> updateModeState());
         modeRequests.addActionListener(e -> updateModeState());
-        g.gridx = 0; g.gridy = 6; p.add(new JLabel("模式:"), g);
+        g.gridx = 0; g.gridy = 7; p.add(new JLabel("模式:"), g);
         g.gridx = 1; g.gridwidth = 2; p.add(modePanel, g);
         g.gridwidth = 1;
 
-        g.gridx = 0; g.gridy = 7; p.add(new JLabel("预热(0=关):"), g);
+        g.gridx = 0; g.gridy = 8; p.add(new JLabel("预热(0=关):"), g);
         g.gridx = 1; p.add(warmupSpin, g);
 
         // 认证：自定义 CoAP Option
@@ -240,12 +248,12 @@ public class CoapTlsLoadTestGui extends JFrame {
         authPanel.add(new JLabel("Token:"));
         authPanel.add(tokenField);
         authCheck.addActionListener(e -> updateAuthState());
-        g.gridx = 0; g.gridy = 8; g.gridwidth = 3; p.add(authPanel, g);
+        g.gridx = 0; g.gridy = 9; g.gridwidth = 4; p.add(authPanel, g);
         g.gridwidth = 1;
 
         JLabel hint = new JLabel("  变量: ${counter} ${timestamp} ${random:N} ${uuid} ${threadId}");
         hint.setForeground(Color.GRAY);
-        g.gridx = 0; g.gridy = 9; g.gridwidth = 3; p.add(hint, g);
+        g.gridx = 0; g.gridy = 10; g.gridwidth = 4; p.add(hint, g);
 
         return p;
     }
@@ -260,6 +268,12 @@ public class CoapTlsLoadTestGui extends JFrame {
         boolean enabled = authCheck.isSelected();
         optionNumField.setEnabled(enabled);
         tokenField.setEnabled(enabled);
+    }
+
+    private void updateTlsState() {
+        boolean tls = tlsCheck.isSelected();
+        jksField.setEnabled(tls);
+        pwdField.setEnabled(tls);
     }
 
     private void append(String s) {
@@ -412,6 +426,7 @@ public class CoapTlsLoadTestGui extends JFrame {
             boolean byDuration = modeDuration.isSelected();
 
             append("===== 配置 =====");
+            append("TLS 证书认证: " + (tlsCheck.isSelected() ? "启用" : "关闭 (明文 TCP)"));
             append("JKS: " + jksPath);
             append("URI: " + uriTemplate);
             String modeInfo = byDuration
@@ -426,23 +441,38 @@ public class CoapTlsLoadTestGui extends JFrame {
             }
             append("");
 
-            Path jks = Paths.get(jksPath);
-            if (!new File(jksPath).exists()) {
-                append("[错误] JKS 文件不存在: " + jksPath);
-                return;
-            }
-            SSLContext sslContext = SslContextFactory.build(jks, password);
+            boolean useTls = tlsCheck.isSelected();
             Configuration config = Configuration.getStandard();
 
-            append("[Setup] 建立 " + threads + " 条 TLS/TCP 连接 ...");
+            // TLS 开关决定连接器类型
+            append("[Setup] 传输模式: " + (useTls ? "TLS/TCP (证书认证)" : "明文 TCP (无证书)"));
             CoapEndpoint[] endpoints = new CoapEndpoint[threads];
-            for (int i = 0; i < threads; i++) {
-                TlsClientConnector connector = new TlsClientConnector(sslContext, config);
-                endpoints[i] = new CoapEndpoint.Builder()
-                        .setConnector(connector)
-                        .setConfiguration(config)
-                        .build();
-                endpoints[i].start();
+            if (useTls) {
+                Path jks = Paths.get(jksPath);
+                if (!new File(jksPath).exists()) {
+                    append("[错误] JKS 文件不存在: " + jksPath);
+                    return;
+                }
+                SSLContext sslContext = SslContextFactory.build(jks, password);
+                append("[Setup] 建立 " + threads + " 条 TLS/TCP 连接 ...");
+                for (int i = 0; i < threads; i++) {
+                    TlsClientConnector connector = new TlsClientConnector(sslContext, config);
+                    endpoints[i] = new CoapEndpoint.Builder()
+                            .setConnector(connector)
+                            .setConfiguration(config)
+                            .build();
+                    endpoints[i].start();
+                }
+            } else {
+                append("[Setup] 建立 " + threads + " 条明文 TCP 连接 ...");
+                for (int i = 0; i < threads; i++) {
+                    TcpClientConnector connector = new TcpClientConnector(config);
+                    endpoints[i] = new CoapEndpoint.Builder()
+                            .setConnector(connector)
+                            .setConfiguration(config)
+                            .build();
+                    endpoints[i].start();
+                }
             }
             append("[Setup] 连接建立完成。");
 

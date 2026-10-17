@@ -9,6 +9,7 @@ import org.eclipse.californium.core.server.resources.CoapExchange;
 import org.eclipse.californium.elements.config.CertificateAuthenticationMode;
 import org.eclipse.californium.elements.config.Configuration;
 import org.eclipse.californium.elements.config.TcpConfig;
+import org.eclipse.californium.elements.tcp.netty.TcpServerConnector;
 import org.eclipse.californium.elements.tcp.netty.TlsServerConnector;
 
 import javax.net.ssl.SSLContext;
@@ -29,18 +30,27 @@ public class CoapTlsServer {
     public static final String PASSWORD = "123456";
 
     public static void main(String[] args) throws Exception {
-        Path jksPath = Paths.get(JKS_FILE);
-        SSLContext sslContext = SslContextFactory.build(jksPath, PASSWORD);
+        // --no-tls 参数：明文 TCP 模式，不需要证书
+        boolean noTls = args.length > 0 && "--no-tls".equalsIgnoreCase(args[0]);
 
         Configuration config = Configuration.getStandard();
-        // 双向认证：要求客户端也提供证书
-        config.set(TcpConfig.TLS_CLIENT_AUTHENTICATION_MODE, CertificateAuthenticationMode.NEEDED);
-        config.set(TcpConfig.TLS_HANDSHAKE_TIMEOUT, 10, java.util.concurrent.TimeUnit.SECONDS);
 
-        TlsServerConnector connector = new TlsServerConnector(
-                sslContext,
-                new InetSocketAddress(PORT),
-                config);
+        org.eclipse.californium.elements.Connector connector;
+        String scheme;
+        if (noTls) {
+            scheme = "coap+tcp";
+            connector = new TcpServerConnector(new InetSocketAddress(PORT), config);
+            System.out.println("[Server] 明文 TCP 模式 (无证书认证)");
+        } else {
+            scheme = "coaps+tcp";
+            Path jksPath = Paths.get(JKS_FILE);
+            SSLContext sslContext = SslContextFactory.build(jksPath, PASSWORD);
+            // 双向认证：要求客户端也提供证书
+            config.set(TcpConfig.TLS_CLIENT_AUTHENTICATION_MODE, CertificateAuthenticationMode.NEEDED);
+            config.set(TcpConfig.TLS_HANDSHAKE_TIMEOUT, 10, java.util.concurrent.TimeUnit.SECONDS);
+            connector = new TlsServerConnector(sslContext, new InetSocketAddress(PORT), config);
+            System.out.println("[Server] TLS/TCP 模式 (双向证书认证)");
+        }
 
         CoapEndpoint endpoint = new CoapEndpoint.Builder()
                 .setConnector(connector)
@@ -55,7 +65,7 @@ public class CoapTlsServer {
         server.add(new AuthResource());
 
         server.start();
-        System.out.println("[Server] CoAP over TLS/TCP started at coaps+tcp://localhost:" + PORT + "/");
+        System.out.println("[Server] CoAP started at " + scheme + "://localhost:" + PORT + "/");
         System.out.println("[Server] Resources: /hello , /echo , /auth");
         System.out.println("[Server] Press Ctrl+C to stop.");
     }
