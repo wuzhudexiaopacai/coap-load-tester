@@ -52,10 +52,11 @@ public class CoapTlsServer {
 
         server.add(new HelloResource());
         server.add(new EchoResource());
+        server.add(new AuthResource());
 
         server.start();
         System.out.println("[Server] CoAP over TLS/TCP started at coaps+tcp://localhost:" + PORT + "/");
-        System.out.println("[Server] Resources: /hello , /echo");
+        System.out.println("[Server] Resources: /hello , /echo , /auth");
         System.out.println("[Server] Press Ctrl+C to stop.");
     }
 
@@ -78,7 +79,9 @@ public class CoapTlsServer {
 
         @Override
         public void handlePOST(CoapExchange exchange) {
-            System.out.println("收到post请求: " + exchange.getRequestText());
+            int cf = exchange.getRequestOptions().getContentFormat();
+            System.out.println("收到post请求: Content-Format=" + cf
+                    + " (" + MediaTypeRegistry.toString(cf) + "), payload=" + exchange.getRequestText());
             exchange.respond(CoAP.ResponseCode.CREATED,
                     "hello echo: " + exchange.getRequestText(),
                     MediaTypeRegistry.TEXT_PLAIN);
@@ -95,9 +98,56 @@ public class CoapTlsServer {
         @Override
         public void handlePOST(CoapExchange exchange) {
             String body = exchange.getRequestText();
-            System.out.println("接收到post请求");
+            int cf = exchange.getRequestOptions().getContentFormat();
+            System.out.println("接收到post请求: Content-Format=" + cf
+                    + " (" + MediaTypeRegistry.toString(cf) + "), payload=" + body);
             exchange.respond(CoAP.ResponseCode.CREATED,
                     "echo: " + body,
+                    MediaTypeRegistry.TEXT_PLAIN);
+        }
+    }
+
+    /**
+     * 认证演示资源：读取自定义 Option (65000) 中的 Token 并回显。
+     * 若未携带 Token，返回 4.01 Unauthorized。
+     */
+    static class AuthResource extends CoapResource {
+        private static final int AUTH_OPTION = 65000;
+
+        AuthResource() {
+            super("auth");
+            getAttributes().setTitle("Auth Resource");
+        }
+
+        @Override
+        public void handleGET(CoapExchange exchange) {
+            handle(exchange, "GET");
+        }
+
+        @Override
+        public void handlePOST(CoapExchange exchange) {
+            handle(exchange, "POST");
+        }
+
+        private void handle(CoapExchange exchange, String method) {
+            byte[] tokenOpt = null;
+            for (org.eclipse.californium.core.coap.Option opt : exchange.getRequestOptions().getOthers()) {
+                if (opt.getNumber() == AUTH_OPTION) {
+                    tokenOpt = opt.getValue();
+                    break;
+                }
+            }
+            if (tokenOpt == null) {
+                System.out.println("[Auth] " + method + " 无 Token，返回 4.01");
+                exchange.respond(CoAP.ResponseCode.UNAUTHORIZED,
+                        "missing token in option " + AUTH_OPTION,
+                        MediaTypeRegistry.TEXT_PLAIN);
+                return;
+            }
+            String token = new String(tokenOpt);
+            System.out.println("[Auth] " + method + " Token=" + token);
+            exchange.respond(CoAP.ResponseCode.CONTENT,
+                    "auth ok, token=" + token + ", payload=" + exchange.getRequestText(),
                     MediaTypeRegistry.TEXT_PLAIN);
         }
     }

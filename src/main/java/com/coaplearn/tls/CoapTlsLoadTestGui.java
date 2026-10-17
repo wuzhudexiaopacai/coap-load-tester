@@ -2,7 +2,10 @@ package com.coaplearn.tls;
 
 import org.eclipse.californium.core.CoapClient;
 import org.eclipse.californium.core.CoapResponse;
+import org.eclipse.californium.core.coap.CoAP;
 import org.eclipse.californium.core.coap.MediaTypeRegistry;
+import org.eclipse.californium.core.coap.Option;
+import org.eclipse.californium.core.coap.Request;
 import org.eclipse.californium.core.network.CoapEndpoint;
 import org.eclipse.californium.elements.config.Configuration;
 import org.eclipse.californium.elements.tcp.netty.TlsClientConnector;
@@ -46,7 +49,8 @@ public class CoapTlsLoadTestGui extends JFrame {
     private final JPasswordField pwdField = new JPasswordField("123456", 12);
     private final JTextField uriField = new JTextField("coaps+tcp://localhost:5684/hello", 30);
     private final JComboBox<String> methodBox = new JComboBox<>(new String[]{"GET", "POST"});
-    private final JTextArea payloadArea = new JTextArea("msg-${counter}-${random:1000}", 3, 30);
+    private final JComboBox<String> contentTypeBox = new JComboBox<>(new String[]{"text/plain", "application/json"});
+    private final JTextArea payloadArea = new JTextArea("{\"msg\":\"hello-${counter}\",\"id\":${random:1000}}", 3, 30);
     private final JSpinner threadsSpin = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1));
     private final JSpinner warmupSpin = new JSpinner(new SpinnerNumberModel(1, 0, 60, 1));
     private final ButtonGroup modeGroup = new ButtonGroup();
@@ -54,6 +58,10 @@ public class CoapTlsLoadTestGui extends JFrame {
     private final JRadioButton modeRequests = new JRadioButton("每线程次数");
     private final JSpinner durationSpin = new JSpinner(new SpinnerNumberModel(10, 1, 3600, 1));
     private final JSpinner totalReqSpin = new JSpinner(new SpinnerNumberModel(100, 1, 1000000, 10));
+    // ---- 认证（自定义 CoAP Option） ----
+    private final JCheckBox authCheck = new JCheckBox("启用认证 (自定义 Option)");
+    private final JTextField optionNumField = new JTextField("65000", 6);
+    private final JTextField tokenField = new JTextField("your-token-here", 20);
 
     // ---- 输出组件 ----
     private final JTextArea logArea = new JTextArea(6, 60);
@@ -102,6 +110,7 @@ public class CoapTlsLoadTestGui extends JFrame {
         JPanel top = new JPanel(new BorderLayout());
         top.add(buildForm(), BorderLayout.NORTH);
         updateModeState();
+        updateAuthState();
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
         stopBtn.setEnabled(false);
@@ -195,6 +204,8 @@ public class CoapTlsLoadTestGui extends JFrame {
 
         g.gridx = 0; g.gridy = 3; p.add(new JLabel("方法:"), g);
         g.gridx = 1; p.add(methodBox, g);
+        g.gridx = 2; p.add(new JLabel("Content-Type:"), g);
+        g.gridx = 3; p.add(contentTypeBox, g);
 
         g.gridx = 0; g.gridy = 4; p.add(new JLabel("载荷(POST):"), g);
         g.gridx = 1; g.gridwidth = 2; g.fill = GridBagConstraints.BOTH; g.weighty = 1;
@@ -221,9 +232,20 @@ public class CoapTlsLoadTestGui extends JFrame {
         g.gridx = 0; g.gridy = 7; p.add(new JLabel("预热(0=关):"), g);
         g.gridx = 1; p.add(warmupSpin, g);
 
+        // 认证：自定义 CoAP Option
+        JPanel authPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        authPanel.add(authCheck);
+        authPanel.add(new JLabel("Option号:"));
+        authPanel.add(optionNumField);
+        authPanel.add(new JLabel("Token:"));
+        authPanel.add(tokenField);
+        authCheck.addActionListener(e -> updateAuthState());
+        g.gridx = 0; g.gridy = 8; g.gridwidth = 3; p.add(authPanel, g);
+        g.gridwidth = 1;
+
         JLabel hint = new JLabel("  变量: ${counter} ${timestamp} ${random:N} ${uuid} ${threadId}");
         hint.setForeground(Color.GRAY);
-        g.gridx = 0; g.gridy = 8; g.gridwidth = 3; p.add(hint, g);
+        g.gridx = 0; g.gridy = 9; g.gridwidth = 3; p.add(hint, g);
 
         return p;
     }
@@ -232,6 +254,12 @@ public class CoapTlsLoadTestGui extends JFrame {
         boolean byDuration = modeDuration.isSelected();
         durationSpin.setEnabled(byDuration);
         totalReqSpin.setEnabled(!byDuration);
+    }
+
+    private void updateAuthState() {
+        boolean enabled = authCheck.isSelected();
+        optionNumField.setEnabled(enabled);
+        tokenField.setEnabled(enabled);
     }
 
     private void append(String s) {
@@ -391,6 +419,11 @@ public class CoapTlsLoadTestGui extends JFrame {
                     : "每线程 " + perThreadCount + " 次 (总计 " + totalRequests + ")";
             append("方法: " + method + " | 并发: " + threads + " | " + modeInfo + " | 预热: " + warmupSec + "s");
             append("载荷模板: " + payloadTemplate);
+            if (authCheck.isSelected()) {
+                append("认证: 启用 | Option号: " + optionNumField.getText().trim() + " | Token: " + tokenField.getText());
+            } else {
+                append("认证: 关闭");
+            }
             append("");
 
             Path jks = Paths.get(jksPath);
@@ -442,6 +475,13 @@ public class CoapTlsLoadTestGui extends JFrame {
     private void runWorkers(CoapEndpoint[] endpoints, String uriTemplate, String method,
                             String payloadTemplate, int threads, long timeLimitMs,
                             long totalRequests, boolean warmup) throws InterruptedException {
+        // 读取认证配置（在测试开始时固定，避免 UI 变化影响）
+        final boolean authEnabled = authCheck.isSelected();
+        final int authOptionNum = authEnabled ? parseOptionNum(optionNumField.getText().trim()) : 0;
+        final String authToken = authEnabled ? tokenField.getText() : null;
+        // 读取 Content-Type
+        final int contentFormat = MediaTypeRegistry.parse((String) contentTypeBox.getSelectedItem());
+
         pool = Executors.newFixedThreadPool(threads);
         CountDownLatch latch = new CountDownLatch(threads);
         long startMs = System.currentTimeMillis();
@@ -459,12 +499,20 @@ public class CoapTlsLoadTestGui extends JFrame {
 
                         long counter = globalCounter.incrementAndGet();
                         String uriStr = substitute(uriTemplate, counter, tid);
-                        client.setURI(uriStr);
+
+                        // 构建请求（支持自定义 Option 携带 Token）
+                        Request request = new Request("POST".equals(method) ? CoAP.Code.POST : CoAP.Code.GET);
+                        request.setURI(uriStr);
+                        if (authEnabled && authToken != null) {
+                            request.getOptions().addOption(new Option(authOptionNum, authToken));
+                        }
+                        if ("POST".equals(method)) {
+                            request.setPayload(substitute(payloadTemplate, counter, tid));
+                            request.getOptions().setContentFormat(contentFormat);
+                        }
 
                         long t0 = System.nanoTime();
-                        CoapResponse resp = "POST".equals(method)
-                                ? client.post(substitute(payloadTemplate, counter, tid), MediaTypeRegistry.TEXT_PLAIN)
-                                : client.get();
+                        CoapResponse resp = client.advanced(request);
                         long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
 
                         if (!warmup) {
@@ -515,6 +563,11 @@ public class CoapTlsLoadTestGui extends JFrame {
             cur = maxLatency.get();
             if (v <= cur) break;
         } while (!maxLatency.compareAndSet(cur, v));
+    }
+
+    private static int parseOptionNum(String s) {
+        try { return Integer.parseInt(s); }
+        catch (NumberFormatException e) { return 65000; }
     }
 
     /** 替换占位符变量 */
