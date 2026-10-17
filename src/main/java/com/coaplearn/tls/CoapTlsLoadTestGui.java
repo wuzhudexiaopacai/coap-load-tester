@@ -11,6 +11,7 @@ import javax.net.ssl.SSLContext;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.io.File;
@@ -47,8 +48,12 @@ public class CoapTlsLoadTestGui extends JFrame {
     private final JComboBox<String> methodBox = new JComboBox<>(new String[]{"GET", "POST"});
     private final JTextArea payloadArea = new JTextArea("msg-${counter}-${random:1000}", 3, 30);
     private final JSpinner threadsSpin = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1));
-    private final JSpinner durationSpin = new JSpinner(new SpinnerNumberModel(10, 1, 3600, 1));
     private final JSpinner warmupSpin = new JSpinner(new SpinnerNumberModel(1, 0, 60, 1));
+    private final ButtonGroup modeGroup = new ButtonGroup();
+    private final JRadioButton modeDuration = new JRadioButton("按时长", true);
+    private final JRadioButton modeRequests = new JRadioButton("每线程次数");
+    private final JSpinner durationSpin = new JSpinner(new SpinnerNumberModel(10, 1, 3600, 1));
+    private final JSpinner totalReqSpin = new JSpinner(new SpinnerNumberModel(100, 1, 1000000, 10));
 
     // ---- 输出组件 ----
     private final JTextArea logArea = new JTextArea(6, 60);
@@ -65,6 +70,7 @@ public class CoapTlsLoadTestGui extends JFrame {
     private final JButton startBtn = new JButton("开始压测");
     private final JButton stopBtn = new JButton("停止");
     private final JButton clearBtn = new JButton("清空结果");
+    private final JButton exportBtn = new JButton("导出CSV");
 
     // ---- 运行状态 ----
     private volatile boolean running = false;
@@ -72,6 +78,8 @@ public class CoapTlsLoadTestGui extends JFrame {
 
     // 结果收集：无界队列，UI 定时器批量取走
     private final ConcurrentLinkedQueue<RequestResult> resultQueue = new ConcurrentLinkedQueue<>();
+    // 所有结果（用于导出，不受表格行数限制）
+    private final java.util.List<RequestResult> allResults = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private static final int MAX_TABLE_ROWS = 500;
 
     // 聚合统计
@@ -93,21 +101,44 @@ public class CoapTlsLoadTestGui extends JFrame {
 
         JPanel top = new JPanel(new BorderLayout());
         top.add(buildForm(), BorderLayout.NORTH);
+        updateModeState();
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
         stopBtn.setEnabled(false);
         startBtn.addActionListener(e -> startTest());
         stopBtn.addActionListener(e -> stopTest());
         clearBtn.addActionListener(e -> clearResults());
+        exportBtn.addActionListener(e -> exportResults());
         btnPanel.add(startBtn);
         btnPanel.add(stopBtn);
         btnPanel.add(clearBtn);
+        btnPanel.add(exportBtn);
         top.add(btnPanel, BorderLayout.SOUTH);
 
         add(top, BorderLayout.NORTH);
 
         // 中间：请求结果表格
         resultTable.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
+        // 状态列着色：OK 绿，FAIL 红
+        resultTable.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object v, boolean sel,
+                                                           boolean focus, int row, int col) {
+                Component c = super.getTableCellRendererComponent(t, v, sel, focus, row, col);
+                String status = String.valueOf(t.getValueAt(row, 5));
+                if ("FAIL".equals(status)) {
+                    c.setForeground(Color.WHITE);
+                    c.setBackground(new Color(200, 60, 60));
+                } else if ("OK".equals(status)) {
+                    c.setForeground(Color.WHITE);
+                    c.setBackground(new Color(60, 150, 60));
+                } else {
+                    c.setForeground(t.getForeground());
+                    c.setBackground(t.getBackground());
+                }
+                return c;
+            }
+        });
         resultTable.getColumnModel().getColumn(0).setPreferredWidth(50);
         resultTable.getColumnModel().getColumn(3).setPreferredWidth(70);
         resultTable.getColumnModel().getColumn(4).setPreferredWidth(80);
@@ -172,9 +203,22 @@ public class CoapTlsLoadTestGui extends JFrame {
 
         g.gridx = 0; g.gridy = 5; p.add(new JLabel("并发:"), g);
         g.gridx = 1; p.add(threadsSpin, g);
-        g.gridx = 0; g.gridy = 6; p.add(new JLabel("时长(秒):"), g);
-        g.gridx = 1; p.add(durationSpin, g);
-        g.gridx = 0; g.gridy = 7; p.add(new JLabel("预热(秒):"), g);
+
+        // 压测模式：按时长 / 按请求数
+        modeGroup.add(modeDuration);
+        modeGroup.add(modeRequests);
+        JPanel modePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        modePanel.add(modeDuration);
+        modePanel.add(durationSpin);
+        modePanel.add(modeRequests);
+        modePanel.add(totalReqSpin);
+        modeDuration.addActionListener(e -> updateModeState());
+        modeRequests.addActionListener(e -> updateModeState());
+        g.gridx = 0; g.gridy = 6; p.add(new JLabel("模式:"), g);
+        g.gridx = 1; g.gridwidth = 2; p.add(modePanel, g);
+        g.gridwidth = 1;
+
+        g.gridx = 0; g.gridy = 7; p.add(new JLabel("预热(0=关):"), g);
         g.gridx = 1; p.add(warmupSpin, g);
 
         JLabel hint = new JLabel("  变量: ${counter} ${timestamp} ${random:N} ${uuid} ${threadId}");
@@ -182,6 +226,12 @@ public class CoapTlsLoadTestGui extends JFrame {
         g.gridx = 0; g.gridy = 8; g.gridwidth = 3; p.add(hint, g);
 
         return p;
+    }
+
+    private void updateModeState() {
+        boolean byDuration = modeDuration.isSelected();
+        durationSpin.setEnabled(byDuration);
+        totalReqSpin.setEnabled(!byDuration);
     }
 
     private void append(String s) {
@@ -194,6 +244,93 @@ public class CoapTlsLoadTestGui extends JFrame {
     private void clearResults() {
         resultModel.setRowCount(0);
         aggLabel.setText(" ");
+        allResults.clear();
+    }
+
+    private void exportResults() {
+        if (allResults.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "没有可导出的结果，请先运行压测。",
+                    "导出", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JFileChooser fc = new JFileChooser(".");
+        fc.setFileFilter(new FileNameExtensionFilter("CSV 文件", "csv"));
+        fc.setSelectedFile(new File("coap-loadtest-" + System.currentTimeMillis() + ".csv"));
+        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File file = fc.getSelectedFile();
+        if (!file.getName().toLowerCase().endsWith(".csv"))
+            file = new File(file.getAbsolutePath() + ".csv");
+
+        try (java.io.PrintWriter pw = new java.io.PrintWriter(
+                new java.io.OutputStreamWriter(new java.io.FileOutputStream(file),
+                        java.nio.charset.StandardCharsets.UTF_8), false)) {
+            // UTF-8 BOM，Excel 可正确识别中文
+            pw.write('\ufeff');
+
+            // 聚合统计区
+            long total = totalReq.sum();
+            long success = successReq.sum();
+            long fail = failReq.sum();
+            long min = minLatency.get();
+            long max = maxLatency.get();
+            long sum = latencySum.get();
+            double avg = total > 0 ? (double) sum / total : 0;
+            double elapsed = (System.currentTimeMillis() - measureStartMs) / 1000.0;
+            double tps = elapsed > 0 ? total / elapsed : 0;
+            double errPct = total > 0 ? (double) fail / total * 100 : 0;
+
+            pw.println("# CoAP TLS/TCP 压测结果");
+            pw.println("# 导出时间: " + java.time.LocalDateTime.now());
+            pw.println("# URI: " + uriField.getText().trim());
+            pw.println("# 方法: " + methodBox.getSelectedItem());
+            pw.println("# 并发: " + threadsSpin.getValue());
+            pw.println();
+            pw.println("指标,数值");
+            pw.println("总请求数," + total);
+            pw.println("成功数," + success);
+            pw.println("失败数," + fail);
+            pw.println("错误率(%)," + String.format("%.2f", errPct));
+            pw.println("平均延迟(ms)," + String.format("%.1f", avg));
+            pw.println("最小延迟(ms)," + (min == Long.MAX_VALUE ? 0 : min));
+            pw.println("最大延迟(ms)," + max);
+            pw.println("p90(ms)," + percentile(90));
+            pw.println("p95(ms)," + percentile(95));
+            pw.println("p99(ms)," + percentile(99));
+            pw.println("吞吐(req/s)," + String.format("%.0f", tps));
+            pw.println("耗时(s)," + String.format("%.1f", elapsed));
+            pw.println();
+
+            // 明细区
+            pw.println("序号,方法,路径,响应码,延迟(ms),状态,响应体");
+            synchronized (allResults) {
+                for (RequestResult r : allResults) {
+                    pw.printf("%d,%s,%s,%s,%d,%s,%s%n",
+                            r.seq(),
+                            csv(r.method()),
+                            csv(r.path()),
+                            csv(r.code()),
+                            r.latencyMs(),
+                            r.status(),
+                            csv(r.body()));
+                }
+            }
+            pw.flush();
+            append("[Export] 已导出 " + allResults.size() + " 条结果到: " + file.getAbsolutePath());
+            JOptionPane.showMessageDialog(this,
+                    "已导出 " + allResults.size() + " 条结果到:\n" + file.getAbsolutePath(),
+                    "导出成功", JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "导出失败: " + ex.getMessage(),
+                    "错误", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static String csv(String s) {
+        if (s == null) return "";
+        if (s.contains(",") || s.contains("\"") || s.contains("\n")) {
+            return "\"" + s.replace("\"", "\"\"") + "\"";
+        }
+        return s;
     }
 
     private void startTest() {
@@ -202,6 +339,7 @@ public class CoapTlsLoadTestGui extends JFrame {
         stopBtn.setEnabled(true);
         resultModel.setRowCount(0);
         resultQueue.clear();
+        allResults.clear();
         totalReq.reset(); successReq.reset(); failReq.reset();
         minLatency.set(Long.MAX_VALUE); maxLatency.set(0); latencySum.set(0);
         latencySamples.clear();
@@ -239,12 +377,19 @@ public class CoapTlsLoadTestGui extends JFrame {
             String payloadTemplate = payloadArea.getText();
             int threads = (int) threadsSpin.getValue();
             int durationSec = (int) durationSpin.getValue();
+            long perThreadCount = ((Number) totalReqSpin.getValue()).longValue();
+            // 总请求数 = 线程数 × 每线程次数（JMeter 风格）
+            long totalRequests = (long) threads * perThreadCount;
             int warmupSec = (int) warmupSpin.getValue();
+            boolean byDuration = modeDuration.isSelected();
 
             append("===== 配置 =====");
             append("JKS: " + jksPath);
             append("URI: " + uriTemplate);
-            append("方法: " + method + " | 并发: " + threads + " | 时长: " + durationSec + "s | 预热: " + warmupSec + "s");
+            String modeInfo = byDuration
+                    ? "按时长: " + durationSec + "s"
+                    : "每线程 " + perThreadCount + " 次 (总计 " + totalRequests + ")";
+            append("方法: " + method + " | 并发: " + threads + " | " + modeInfo + " | 预热: " + warmupSec + "s");
             append("载荷模板: " + payloadTemplate);
             append("");
 
@@ -269,15 +414,18 @@ public class CoapTlsLoadTestGui extends JFrame {
             append("[Setup] 连接建立完成。");
 
             if (warmupSec > 0) {
-                append("[Warmup] 预热 " + warmupSec + "s ...");
+                // 预热：每个线程发固定 5 个请求完成 TLS 握手，不按时长跑，避免打满服务端
+                long warmupReqs = (long) threads * 5;
+                append("[Warmup] 预热 " + threads + " 条连接，每连接 5 请求 (共 " + warmupReqs + ") ...");
                 runWorkers(endpoints, uriTemplate, method, payloadTemplate, threads,
-                        warmupSec * 1000L, true);
+                        10_000L, warmupReqs, true);
             }
 
-            append("[Running] 正式压测 " + durationSec + "s ...");
+            append("[Running] 正式压测 (" + modeInfo + ") ...");
             measureStartMs = System.currentTimeMillis();
             runWorkers(endpoints, uriTemplate, method, payloadTemplate, threads,
-                    durationSec * 1000L, false);
+                    byDuration ? durationSec * 1000L : Long.MAX_VALUE,
+                    byDuration ? 0L : totalRequests, false);
 
             append("[Done] 压测结束。");
 
@@ -293,7 +441,7 @@ public class CoapTlsLoadTestGui extends JFrame {
 
     private void runWorkers(CoapEndpoint[] endpoints, String uriTemplate, String method,
                             String payloadTemplate, int threads, long timeLimitMs,
-                            boolean warmup) throws InterruptedException {
+                            long totalRequests, boolean warmup) throws InterruptedException {
         pool = Executors.newFixedThreadPool(threads);
         CountDownLatch latch = new CountDownLatch(threads);
         long startMs = System.currentTimeMillis();
@@ -307,6 +455,7 @@ public class CoapTlsLoadTestGui extends JFrame {
                     client.setEndpoint(endpoints[tid]);
                     while (running) {
                         if (System.currentTimeMillis() - startMs > timeLimitMs) break;
+                        if (totalRequests > 0 && globalCounter.get() >= totalRequests) break;
 
                         long counter = globalCounter.incrementAndGet();
                         String uriStr = substitute(uriTemplate, counter, tid);
@@ -328,21 +477,25 @@ public class CoapTlsLoadTestGui extends JFrame {
                                 latencySamples.offer(costMs);
 
                             String path = uriStr.contains("?") ? uriStr.substring(uriStr.indexOf('/', 10)) : uriStr.substring(uriStr.indexOf('/', 10));
-                            resultQueue.offer(new RequestResult(
+                            RequestResult rr = new RequestResult(
                                     totalReq.sum(),
                                     method, path,
                                     resp == null ? "TIMEOUT" : resp.getCode().toString(),
                                     costMs,
                                     ok ? "OK" : "FAIL",
-                                    resp == null ? "" : truncate(resp.getResponseText(), 80)));
+                                    resp == null ? "" : truncate(resp.getResponseText(), 80));
+                            resultQueue.offer(rr);
+                            allResults.add(rr);
                         }
                     }
                     client.shutdown();
                 } catch (Exception e) {
                     if (!warmup) {
                         failReq.increment();
-                        resultQueue.offer(new RequestResult(totalReq.sum(), method, "",
-                                "EX:" + e.getClass().getSimpleName(), 0, "FAIL", e.getMessage()));
+                        RequestResult rr = new RequestResult(totalReq.sum(), method, "",
+                                "EX:" + e.getClass().getSimpleName(), 0, "FAIL", e.getMessage());
+                        resultQueue.offer(rr);
+                        allResults.add(rr);
                     }
                 } finally {
                     latch.countDown();

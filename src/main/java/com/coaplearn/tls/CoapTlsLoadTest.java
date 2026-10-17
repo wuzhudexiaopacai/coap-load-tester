@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.LongAdder;
  * <ul>
  *     <li>{@code --threads N}      并发线程数（同时建立的 TLS/TCP 连接数），默认 50</li>
  *     <li>{@code --duration S}     持续压测秒数（与 --requests 二选一，默认 10 秒）</li>
- *     <li>{@code --requests N}     总请求数（达到即停止）</li>
+ *     <li>{@code --requests N}     每线程请求次数（总请求数 = 线程数 × N）</li>
  *     <li>{@code --path /xxx}      请求路径，默认 /hello</li>
  *     <li>{@code --method GET|POST} 请求方法，默认 GET</li>
  *     <li>{@code --warmup S}       预热秒数（不计入统计），默认 2</li>
@@ -73,12 +73,17 @@ public class CoapTlsLoadTest {
 
         latencies = new long[threads][];
 
+        // --requests 表示每线程次数，总请求数 = 线程数 × 每线程次数（JMeter 风格）
+        if (totalRequestsLimit > 0) {
+            totalRequestsLimit = (long) threads * totalRequestsLimit;
+        }
+
         System.out.println("===== CoAP TLS/TCP Load Test =====");
         System.out.printf("threads=%d, path=%s, method=%s, ", threads, path, method);
         if (totalRequestsLimit > 0) {
             System.out.printf("totalRequests=%d%n", totalRequestsLimit);
         } else {
-            System.out.printf("duration=%ds, warmup=%ds%n", durationSec, warmupSec);
+            System.out.printf("duration=%ds%n", durationSec);
         }
 
         // ---- 构建 SSLContext（所有连接复用同一个） ----
@@ -100,9 +105,10 @@ public class CoapTlsLoadTest {
 
         URI targetUri = new URI(BASE_URI + path);
 
-        // ---- 预热 ----
-        System.out.println("[Warmup] " + warmupSec + "s ...");
-        runWorkers(endpoints, targetUri, method, threads, -1, warmupSec * 1000L, true);
+        // ---- 预热（每线程固定 5 个请求完成 TLS 握手） ----
+        long warmupReqs = (long) threads * 5;
+        System.out.println("[Warmup] 每线程 5 请求 (共 " + warmupReqs + ") ...");
+        runWorkers(endpoints, targetUri, method, threads, warmupReqs, 10_000L, true);
 
         // 清零统计
         totalRequests.reset();
