@@ -19,7 +19,6 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.io.File;
-import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.UUID;
@@ -32,18 +31,26 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * CoAP over TLS/TCP 图形化压测工具
+ * CoapLoadTester — CoAP 图形化压测工具
  * <p>
  * 功能：
  * <ul>
- *     <li>配置 JKS / 密码 / URI / 方法 / 载荷 / 并发 / 时长</li>
- *     <li>每个请求的结果表格（方法、路径、响应码、延迟、状态、响应体）</li>
- *     <li>聚合统计（samples / avg / min / max / 吞吐 / 错误率 / p90 / p99）</li>
+ *     <li>传输模式：TLS/TCP（JKS 双向认证）或明文 TCP，可开关</li>
+ *     <li>配置 JKS / 密码 / URI / 方法 / Content-Type / 载荷 / 并发 / 模式（按时长或每线程次数）/ 预热开关</li>
+ *     <li>认证：自定义 CoAP Option 携带 Token，可开关</li>
+ *     <li>每个请求的结果表格（方法、路径、响应码、延迟、状态、响应体），状态着色</li>
+ *     <li>聚合统计（samples / avg / min / max / 吞吐 / 错误率 / p90 / p95 / p99）</li>
  *     <li>可变参数：载荷和 URI 路径支持占位符
- *         ${counter} ${timestamp} ${random:N} ${uuid} ${threadId}</li>
+ *         ${counter} ${timestamp} ${random:N} ${uuid} ${threadId} ${randStr:N} ${uniqStr:N}</li>
+ *     <li>导出 CSV（聚合统计 + 请求明细，UTF-8 BOM）</li>
  * </ul>
+ *
  */
-public class CoapTlsLoadTestGui extends JFrame {
+
+/**
+ * @author ndx
+ */
+public class CoapLoadTester extends JFrame {
 
     // ---- 输入组件 ----
     private final JCheckBox tlsCheck = new JCheckBox("启用 TLS 证书认证", true);
@@ -54,7 +61,7 @@ public class CoapTlsLoadTestGui extends JFrame {
     private final JComboBox<String> contentTypeBox = new JComboBox<>(new String[]{"text/plain", "application/json"});
     private final JTextArea payloadArea = new JTextArea("{\"msg\":\"hello-${counter}\",\"id\":${random:1000}}", 3, 30);
     private final JSpinner threadsSpin = new JSpinner(new SpinnerNumberModel(10, 1, 1000, 1));
-    private final JSpinner warmupSpin = new JSpinner(new SpinnerNumberModel(1, 0, 60, 1));
+    private final JCheckBox warmupCheck = new JCheckBox("开启预热", true);
     private final ButtonGroup modeGroup = new ButtonGroup();
     private final JRadioButton modeDuration = new JRadioButton("按时长", true);
     private final JRadioButton modeRequests = new JRadioButton("每线程次数");
@@ -104,8 +111,8 @@ public class CoapTlsLoadTestGui extends JFrame {
     private static final int MAX_LATENCY_SAMPLES = 100_000;
     private long measureStartMs;
 
-    public CoapTlsLoadTestGui() {
-        super("CoAP TLS/TCP 压测工具");
+    public CoapLoadTester() {
+        super("CoapLoadTester - CoAP 压测工具");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLayout(new BorderLayout(6, 6));
 
@@ -198,8 +205,9 @@ public class CoapTlsLoadTestGui extends JFrame {
         browse.addActionListener(e -> {
             JFileChooser fc = new JFileChooser(".");
             fc.setFileFilter(new FileNameExtensionFilter("JKS", "jks"));
-            if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION)
+            if (fc.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 jksField.setText(fc.getSelectedFile().getAbsolutePath());
+            }
         });
         g.gridx = 2; g.fill = GridBagConstraints.NONE; g.weightx = 0; p.add(browse, g);
 
@@ -237,8 +245,8 @@ public class CoapTlsLoadTestGui extends JFrame {
         g.gridx = 1; g.gridwidth = 2; p.add(modePanel, g);
         g.gridwidth = 1;
 
-        g.gridx = 0; g.gridy = 8; p.add(new JLabel("预热(0=关):"), g);
-        g.gridx = 1; p.add(warmupSpin, g);
+        g.gridx = 0; g.gridy = 8; p.add(new JLabel("预热:"), g);
+        g.gridx = 1; p.add(warmupCheck, g);
 
         // 认证：自定义 CoAP Option
         JPanel authPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
@@ -251,7 +259,7 @@ public class CoapTlsLoadTestGui extends JFrame {
         g.gridx = 0; g.gridy = 9; g.gridwidth = 4; p.add(authPanel, g);
         g.gridwidth = 1;
 
-        JLabel hint = new JLabel("  变量: ${counter} ${timestamp} ${random:N} ${uuid} ${threadId}");
+        JLabel hint = new JLabel("  变量: ${counter} ${timestamp} ${random:N} ${uuid} ${threadId} ${randStr:N} ${uniqStr:N}");
         hint.setForeground(Color.GRAY);
         g.gridx = 0; g.gridy = 10; g.gridwidth = 4; p.add(hint, g);
 
@@ -298,11 +306,11 @@ public class CoapTlsLoadTestGui extends JFrame {
         JFileChooser fc = new JFileChooser(".");
         fc.setFileFilter(new FileNameExtensionFilter("CSV 文件", "csv"));
         fc.setSelectedFile(new File("coap-loadtest-" + System.currentTimeMillis() + ".csv"));
-        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) { return; }
         File file = fc.getSelectedFile();
-        if (!file.getName().toLowerCase().endsWith(".csv"))
+        if (!file.getName().toLowerCase().endsWith(".csv")) {
             file = new File(file.getAbsolutePath() + ".csv");
-
+        }
         try (java.io.PrintWriter pw = new java.io.PrintWriter(
                 new java.io.OutputStreamWriter(new java.io.FileOutputStream(file),
                         java.nio.charset.StandardCharsets.UTF_8), false)) {
@@ -368,7 +376,7 @@ public class CoapTlsLoadTestGui extends JFrame {
     }
 
     private static String csv(String s) {
-        if (s == null) return "";
+        if (s == null) { return ""; }
         if (s.contains(",") || s.contains("\"") || s.contains("\n")) {
             return "\"" + s.replace("\"", "\"\"") + "\"";
         }
@@ -407,7 +415,7 @@ public class CoapTlsLoadTestGui extends JFrame {
     private void stopTest() {
         running = false;
         append("[Stop] 正在停止 ...");
-        if (pool != null) pool.shutdownNow();
+        if (pool != null) { pool.shutdownNow(); }
     }
 
     private void runLoadTest() {
@@ -422,7 +430,7 @@ public class CoapTlsLoadTestGui extends JFrame {
             long perThreadCount = ((Number) totalReqSpin.getValue()).longValue();
             // 总请求数 = 线程数 × 每线程次数（JMeter 风格）
             long totalRequests = (long) threads * perThreadCount;
-            int warmupSec = (int) warmupSpin.getValue();
+            boolean warmupEnabled = warmupCheck.isSelected();
             boolean byDuration = modeDuration.isSelected();
 
             append("===== 配置 =====");
@@ -432,7 +440,7 @@ public class CoapTlsLoadTestGui extends JFrame {
             String modeInfo = byDuration
                     ? "按时长: " + durationSec + "s"
                     : "每线程 " + perThreadCount + " 次 (总计 " + totalRequests + ")";
-            append("方法: " + method + " | 并发: " + threads + " | " + modeInfo + " | 预热: " + warmupSec + "s");
+            append("方法: " + method + " | 并发: " + threads + " | " + modeInfo + " | 预热: " + (warmupEnabled ? "开" : "关"));
             append("载荷模板: " + payloadTemplate);
             if (authCheck.isSelected()) {
                 append("认证: 启用 | Option号: " + optionNumField.getText().trim() + " | Token: " + tokenField.getText());
@@ -476,7 +484,7 @@ public class CoapTlsLoadTestGui extends JFrame {
             }
             append("[Setup] 连接建立完成。");
 
-            if (warmupSec > 0) {
+            if (warmupEnabled) {
                 // 预热：每个线程发固定 5 个请求完成 TLS 握手，不按时长跑，避免打满服务端
                 long warmupReqs = (long) threads * 5;
                 append("[Warmup] 预热 " + threads + " 条连接，每连接 5 请求 (共 " + warmupReqs + ") ...");
@@ -524,8 +532,8 @@ public class CoapTlsLoadTestGui extends JFrame {
                     CoapClient client = new CoapClient();
                     client.setEndpoint(endpoints[tid]);
                     while (running) {
-                        if (System.currentTimeMillis() - startMs > timeLimitMs) break;
-                        if (totalRequests > 0 && globalCounter.get() >= totalRequests) break;
+                        if (System.currentTimeMillis() - startMs > timeLimitMs) { break; }
+                        if (totalRequests > 0 && globalCounter.get() >= totalRequests) { break; }
 
                         long counter = globalCounter.incrementAndGet();
                         String uriStr = substitute(uriTemplate, counter, tid);
@@ -548,11 +556,16 @@ public class CoapTlsLoadTestGui extends JFrame {
                         if (!warmup) {
                             totalReq.increment();
                             boolean ok = resp != null && resp.isSuccess();
-                            if (ok) successReq.increment(); else failReq.increment();
+                            if (ok) {
+                                successReq.increment();
+                            } else {
+                                failReq.increment();
+                            }
                             latencySum.addAndGet(costMs);
                             updateMinMax(costMs);
-                            if (latencySamples.size() < MAX_LATENCY_SAMPLES)
+                            if (latencySamples.size() < MAX_LATENCY_SAMPLES){
                                 latencySamples.offer(costMs);
+                            }
 
                             String path = uriStr.contains("?") ? uriStr.substring(uriStr.indexOf('/', 10)) : uriStr.substring(uriStr.indexOf('/', 10));
                             RequestResult rr = new RequestResult(
@@ -587,11 +600,11 @@ public class CoapTlsLoadTestGui extends JFrame {
         long cur;
         do {
             cur = minLatency.get();
-            if (v >= cur) break;
+            if (v >= cur) { break; }
         } while (!minLatency.compareAndSet(cur, v));
         do {
             cur = maxLatency.get();
-            if (v <= cur) break;
+            if (v <= cur) { break; }
         } while (!maxLatency.compareAndSet(cur, v));
     }
 
@@ -602,7 +615,7 @@ public class CoapTlsLoadTestGui extends JFrame {
 
     /** 替换占位符变量 */
     private static String substitute(String template, long counter, int threadId) {
-        if (template == null) return "";
+        if (template == null) { return ""; }
         String s = template;
         s = s.replace("${counter}", String.valueOf(counter));
         s = s.replace("${threadId}", String.valueOf(threadId));
@@ -612,7 +625,7 @@ public class CoapTlsLoadTestGui extends JFrame {
         int idx;
         while ((idx = s.indexOf("${random:")) >= 0) {
             int end = s.indexOf('}', idx);
-            if (end < 0) break;
+            if (end < 0) { break; }
             String numStr = s.substring(idx + 9, end);
             try {
                 int bound = Integer.parseInt(numStr.trim());
@@ -621,7 +634,61 @@ public class CoapTlsLoadTestGui extends JFrame {
                 s = s.substring(0, idx) + s.substring(end + 1);
             }
         }
+        // ${randStr:N} 固定长度随机字符串（可重复）
+        while ((idx = s.indexOf("${randStr:")) >= 0) {
+            int end = s.indexOf('}', idx);
+            if (end < 0) { break; }
+            String numStr = s.substring(idx + 10, end);
+            try {
+                int len = Integer.parseInt(numStr.trim());
+                s = s.substring(0, idx) + randomString(len) + s.substring(end + 1);
+            } catch (NumberFormatException e) {
+                s = s.substring(0, idx) + s.substring(end + 1);
+            }
+        }
+        // ${uniqStr:N} 固定长度随机字符串（不重复，由 counter 保证唯一）
+        while ((idx = s.indexOf("${uniqStr:")) >= 0) {
+            int end = s.indexOf('}', idx);
+            if (end < 0) { break; }
+            String numStr = s.substring(idx + 10, end);
+            try {
+                int len = Integer.parseInt(numStr.trim());
+                s = s.substring(0, idx) + uniqueString(len, counter) + s.substring(end + 1);
+            } catch (NumberFormatException e) {
+                s = s.substring(0, idx) + s.substring(end + 1);
+            }
+        }
         return s;
+    }
+
+    private static final char[] RAND_CHARS =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toCharArray();
+    private static final java.util.Random RANDOM = new java.util.Random();
+
+    /** 生成固定长度的随机字符串（可重复） */
+    private static String randomString(int len) {
+        if (len <= 0) { return ""; }
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            sb.append(RAND_CHARS[RANDOM.nextInt(RAND_CHARS.length)]);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 生成固定长度的不重复字符串。
+     * 前缀为 counter 的 base36 表示（全局唯一），不足部分补随机字符。
+     * 只要 len >= counter 的 base36 长度即可保证全局唯一。
+     */
+    private static String uniqueString(int len, long counter) {
+        if (len <= 0) { return ""; }
+        String base = Long.toString(counter, 36);
+        if (base.length() >= len) { return base.substring(0, len); }
+        StringBuilder sb = new StringBuilder(base);
+        while (sb.length() < len) {
+            sb.append(RAND_CHARS[RANDOM.nextInt(RAND_CHARS.length)]);
+        }
+        return sb.toString();
     }
 
     /** 定时器回调：把队列里的结果搬到表格，更新聚合统计 */
@@ -642,7 +709,7 @@ public class CoapTlsLoadTestGui extends JFrame {
                 // 简单处理：失败行用红色（通过渲染器）
             }
             added++;
-            if (added > 200) break; // 单次刷新最多处理 200 条，避免卡 UI
+            if (added > 200) { break; }// 单次刷新最多处理 200 条，避免卡 UI
         }
 
         // 聚合统计
@@ -674,19 +741,21 @@ public class CoapTlsLoadTestGui extends JFrame {
     }
 
     private long percentile(double p) {
-        if (latencySamples.isEmpty()) return 0;
+        if (latencySamples.isEmpty()) { return 0; }
         // 快照：避免与 worker 线程并发修改导致数组越界
         Long[] snapshot = latencySamples.toArray(new Long[0]);
-        if (snapshot.length == 0) return 0;
+        if (snapshot.length == 0) { return 0; }
         long[] arr = new long[snapshot.length];
-        for (int i = 0; i < snapshot.length; i++) arr[i] = snapshot[i];
+        for (int i = 0; i < snapshot.length; i++) {
+            arr[i] = snapshot[i];
+        }
         java.util.Arrays.sort(arr);
         int idx = (int) Math.ceil(p / 100.0 * arr.length) - 1;
         return arr[Math.max(0, Math.min(idx, arr.length - 1))];
     }
 
     private static String truncate(String s, int max) {
-        if (s == null) return "";
+        if (s == null) { return ""; }
         return s.length() <= max ? s : s.substring(0, max) + "...";
     }
 
@@ -696,6 +765,6 @@ public class CoapTlsLoadTestGui extends JFrame {
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> new CoapTlsLoadTestGui().setVisible(true));
+        SwingUtilities.invokeLater(() -> new CoapLoadTester().setVisible(true));
     }
 }

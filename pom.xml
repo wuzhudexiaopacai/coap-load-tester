@@ -45,6 +45,57 @@
                 <version>3.11.0</version>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.coaplearn.tls.CoapLoadTester</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <!-- ProGuard 混淆：只混淆本项目代码，第三方库作为 libraryjars 不改动 -->
+            <plugin>
+                <groupId>com.github.wvengen</groupId>
+                <artifactId>proguard-maven-plugin</artifactId>
+                <version>2.6.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>proguard</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <proguardVersion>7.6.1</proguardVersion>
+                    <injar>${project.build.finalName}.jar</injar>
+                    <outjar>${project.build.finalName}-obf.jar</outjar>
+                    <outputDirectory>${project.build.directory}</outputDirectory>
+                    <obfuscate>true</obfuscate>
+                    <options>
+                        <option>-dontshrink</option>
+                        <option>-dontoptimize</option>
+                        <option>-dontnote</option>
+                        <option>-ignorewarnings</option>
+                        <!-- 保留 GUI 入口类名与 main 方法，供 exe 启动器调用 -->
+                        <option>-keep public class com.coaplearn.tls.CoapLoadTester { public static void main(java.lang.String[]); }</option>
+                        <option>-keepattributes Exceptions,Signature,Deprecated,*Annotation*,InnerClasses,EnclosingMethod,Record</option>
+                        <option>-libraryjars ${java.home}/jmods/java.base.jmod</option>
+                        <option>-libraryjars ${java.home}/jmods/java.desktop.jmod</option>
+                    </options>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.guardsquare</groupId>
+                        <artifactId>proguard-base</artifactId>
+                        <version>7.6.1</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+            <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>

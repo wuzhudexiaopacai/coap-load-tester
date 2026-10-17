@@ -5,9 +5,17 @@ REM   e.g. run-loadtest.bat --threads 50 --duration 30 --path /hello --method GE
 
 setlocal
 
-REM Force JDK 21 (override any system JAVA_HOME that may point to an older JDK)
-set JAVA_HOME=D:\jdk21
+REM Use JAVA_HOME from environment (must point to JDK 21+)
+if not defined JAVA_HOME (
+    echo [ERROR] JAVA_HOME is not set. Please point it to JDK 21+.
+    exit /b 1
+)
 set "JAVA=%JAVA_HOME%\bin\java.exe"
+if not exist "%JAVA%" (
+    echo [ERROR] java not found: %JAVA%
+    echo         Please make sure JAVA_HOME points to JDK 21+.
+    exit /b 1
+)
 
 if not exist target\classes\com\coaplearn\tls\CoapTlsLoadTest.class (
     echo [INFO] Compiling project ...

@@ -230,4 +230,4 @@ Get-NetTCPConnection -LocalPort 5684 | ForEach-Object { Stop-Process -Id $_.Owni
 
 ## 许可证
 
-Eclipse Public License v2.0（跟随 Californium）
+Eclipse Public License v2.0
